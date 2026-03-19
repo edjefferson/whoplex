@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+
+# Env
+.env
+
+# Data — generated at runtime
+data/hls/
+data/thumbs/
+data/subtitles/
+data/bsubs/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# macOS
+.DS_Store
+
+# Claude
+.claude/settings.local.json

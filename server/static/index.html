@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Whoplex</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #111; color: #eee; display: flex; flex-direction: column; height: 100vh; }
+
+    /* ── Player ── */
+    #player-wrap { background: #000; flex-shrink: 0; }
+    #player-wrap.hidden { display: none; }
+    #video-container { position: relative; }
+    video { width: 100%; max-height: 52vh; display: block; }
+    #sub-overlay { position: absolute; bottom: 48px; left: 0; right: 0; text-align: center; pointer-events: none; }
+    #sub-overlay span { background: rgba(0,0,0,.78); color: #fff; padding: .15rem .6rem; font-size: 1rem; border-radius: 3px; white-space: pre-wrap; line-height: 1.6; }
+    #sub-img { max-width: 100%; max-height: 80px; display: none; }
+    #now-playing { padding: .3rem 1rem; background: #1a1a1a; font-size: .82rem; color: #bbb; }
+
+    /* ── Track panel ── */
+    #track-panel { background: #161616; border-bottom: 1px solid #2a2a2a; padding: .4rem 1rem; font-size: .78rem; flex-shrink: 0; display: none; }
+    #track-panel.visible { display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: flex-start; }
+    .track-group { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+    .track-label { color: #666; white-space: nowrap; }
+    .track-btn { padding: .2rem .55rem; background: #2a2a2a; color: #ccc; border: 1px solid #444; border-radius: 3px; cursor: pointer; font-size: .75rem; }
+    .track-btn:hover { background: #333; }
+    .track-btn.active { background: #f90; color: #000; border-color: #f90; }
+    .track-btn.off { color: #888; }
+
+    /* ── Chrome ── */
+    #chrome { padding: .55rem 1rem; background: #1a1a1a; border-bottom: 1px solid #2a2a2a; display: flex; align-items: center; gap: .75rem; flex-shrink: 0; }
+    h1 { font-size: 1.1rem; color: #f90; cursor: pointer; white-space: nowrap; }
+    h1:hover { color: #ffb733; }
+    #search { flex: 1; padding: .32rem .65rem; font-size: .9rem; background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; }
+    #breadcrumb { font-size: .8rem; color: #888; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #breadcrumb .crumb-link { color: #ccc; cursor: pointer; }
+    #breadcrumb .crumb-link:hover { color: #f90; }
+    #breadcrumb .sep { margin: 0 .3rem; color: #555; }
+
+    /* ── Content ── */
+    #content { flex: 1; overflow-y: auto; padding: 1rem; }
+
+    /* ── Grids ── */
+    .grid-seasons  { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .75rem; }
+    .grid-stories  { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: .75rem; }
+    .grid-episodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .75rem; }
+    .grid-search   { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: .75rem; }
+
+    /* ── Cards ── */
+    .card { background: #1e1e1e; border-radius: 6px; cursor: pointer; border: 2px solid transparent; transition: border-color .12s, background .12s; overflow: hidden; }
+    .card:hover { border-color: #555; background: #252525; }
+    .card.playing { border-color: #f90; }
+    .season-card { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 1.2rem .5rem; text-align: center; }
+    .season-thumb { width: 100%; height: 80px; object-fit: cover; display: block; }
+    .season-num { font-size: 2rem; font-weight: bold; color: #f90; line-height: 1; margin-top: .4rem; }
+    .season-label { font-size: .7rem; color: #888; margin-top: .15rem; }
+    .season-meta { font-size: .65rem; color: #666; margin-top: .25rem; }
+    .story-card { padding: .7rem .9rem; }
+    .story-title { font-size: .88rem; font-weight: bold; }
+    .story-meta { font-size: .72rem; color: #888; margin-top: .2rem; }
+    .ep-thumb { width: 100%; height: 85px; object-fit: cover; background: #2a2a2a; display: block; }
+    .ep-body { padding: .4rem .5rem; }
+    .ep-title { font-size: .8rem; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ep-meta { font-size: .68rem; color: #888; margin-top: .15rem; }
+
+    /* ── Cast footer ── */
+    #cast-wrap { background: #161616; border-top: 1px solid #2a2a2a; padding: .4rem 1rem; font-size: .8rem; flex-shrink: 0; }
+    #cast-toggle { background: none; border: none; color: #666; cursor: pointer; font-size: .78rem; }
+    #cast-toggle:hover { color: #f90; }
+    #cast-body { display: none; padding-top: .4rem; }
+    #cast-body.open { display: block; }
+    .device-btn { padding: .3rem .65rem; margin-right: .4rem; margin-bottom: .3rem; background: #f90; color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: .78rem; }
+  </style>
+</head>
+<body>
+
+<div id="player-wrap" class="hidden">
+  <div id="video-container">
+    <video id="player" controls autoplay></video>
+    <div id="sub-overlay"><span id="sub-text" style="display:none"></span><img id="sub-img" /></div>
+  </div>
+  <div id="now-playing"></div>
+</div>
+
+<div id="track-panel"></div>
+
+<div id="chrome">
+  <h1 id="home-btn">Whoplex</h1>
+  <div id="breadcrumb"></div>
+  <input id="search" type="text" placeholder="Search all…" />
+</div>
+
+<div id="content"></div>
+
+<div id="cast-wrap">
+  <button id="cast-toggle" onclick="toggleCast()">▶ Chromecast</button>
+  <div id="cast-body">
+    <div id="device-list"><em>Loading…</em></div>
+  </div>
+</div>
+
+<script>
+  // ── State ────────────────────────────────────────────
+  let selectedId   = null;
+  let hlsInstance  = null;
+  let hlsMode      = 'direct'; // 'direct' | 'master'
+  let hlsPollTimer = null;
+  // activeSub: { mode: 'off'|'text'|'bitmap', cues: [], images: {}, base: '' }
+  let activeSub    = { mode: 'off', cues: [], images: {}, base: '' };
+
+  // ── VTT parser ───────────────────────────────────────
+  function parseVTT(text) {
+    const cues = [];
+    for (const block of text.split(/\n{2,}/)) {
+      const lines = block.trim().split('\n');
+      const tsLine = lines.find(l => l.includes('-->'));
+      if (!tsLine) continue;
+      const [s, e] = tsLine.split('-->').map(t => {
+        const p = t.trim().replace(',', '.').split(':');
+        return p.length === 3
+          ? +p[0] * 3600 + +p[1] * 60 + +p[2]
+          : +p[0] * 60 + +p[1];
+      });
+      const txt = lines.slice(lines.indexOf(tsLine) + 1)
+        .join('\n').replace(/<[^>]+>/g, '').trim();
+      if (txt) cues.push({ start: s, end: e, text: txt });
+    }
+    return cues;
+  }
+
+  // ── Subtitle overlay renderer ─────────────────────────
+  const subOverlay = document.getElementById('sub-overlay');
+  const subText    = document.getElementById('sub-text');
+  const subImg     = document.getElementById('sub-img');
+
+  // Constrain the overlay to the actual rendered video content area,
+  // excluding pillarbox/letterbox bars that appear inside the element box.
+  function fitSubOverlay() {
+    if (!player.videoWidth) return;
+    const vAspect = player.videoWidth / player.videoHeight;
+    const eW = player.offsetWidth, eH = player.offsetHeight;
+    let cW, cH;
+    if (eW / eH > vAspect) {
+      cH = eH; cW = eH * vAspect;   // pillarboxed
+    } else {
+      cW = eW; cH = eW / vAspect;   // letterboxed
+    }
+    const hPad = Math.round((eW - cW) / 2);
+    const vPad = Math.round((eH - cH) / 2);
+    subOverlay.style.left   = hPad + 'px';
+    subOverlay.style.right  = hPad + 'px';
+    subOverlay.style.bottom = (vPad + 48) + 'px';
+  }
+
+  player.addEventListener('loadedmetadata', fitSubOverlay);
+  window.addEventListener('resize', fitSubOverlay);
+
+  document.getElementById('player').addEventListener('timeupdate', () => {
+    if (activeSub.mode === 'off' || !activeSub.cues.length) {
+      subText.style.display = 'none';
+      subImg.style.display  = 'none';
+      return;
+    }
+    const t = document.getElementById('player').currentTime;
+    const cue = activeSub.cues.find(c => t >= c.start && t < c.end);
+    if (activeSub.mode === 'text') {
+      subImg.style.display = 'none';
+      if (cue) { subText.textContent = cue.text; subText.style.display = 'inline'; }
+      else      { subText.style.display = 'none'; }
+    } else {
+      // bitmap mode — src already in browser cache, no HTTP request
+      subText.style.display = 'none';
+      if (cue) { subImg.src = activeSub.images[cue.frame].src; subImg.style.display = 'inline-block'; }
+      else      { subImg.style.display = 'none'; }
+    }
+  });
+
+  // ── History / routing ────────────────────────────────
+  function nav(state, push = true) {
+    if (push) history.pushState(state, '');
+    render(state);
+  }
+
+  async function render(state) {
+    if (!state || state.view === 'seasons') {
+      await showSeasons();
+    } else if (state.view === 'stories') {
+      await showStories(state.season);
+    } else if (state.view === 'episodes') {
+      await showEpisodes(state.season, state.story);
+    } else if (state.view === 'search') {
+      await doSearch(state.q, false);
+    }
+  }
+
+  window.addEventListener('popstate', e => render(e.state));
+
+  document.getElementById('home-btn').addEventListener('click', () => {
+    document.getElementById('search').value = '';
+    nav({ view: 'seasons' });
+  });
+
+  // ── Seasons ──────────────────────────────────────────
+  async function showSeasons() {
+    const res = await fetch('/browse/seasons');
+    const seasons = await res.json();
+    setBreadcrumb();
+    const grid = document.createElement('div');
+    grid.className = 'grid-seasons';
+    seasons.forEach(s => {
+      const num = (s.name.match(/\d+/) || ['?'])[0];
+      const card = document.createElement('div');
+      card.className = 'card season-card';
+      if (s.thumb_id) {
+        const img = document.createElement('img');
+        img.className = 'season-thumb';
+        img.src = `/thumb/${s.thumb_id}`;
+        img.loading = 'lazy';
+        img.onerror = () => img.remove();
+        card.appendChild(img);
+      }
+      card.insertAdjacentHTML('beforeend',
+        `<div class="season-num">${num}</div>
+         <div class="season-label">Season</div>
+         <div class="season-meta">${s.story_count} stories · ${s.episode_count} ep</div>`);
+      card.addEventListener('click', () => nav({ view: 'stories', season: s.name }));
+      grid.appendChild(card);
+    });
+    setContent(grid);
+  }
+
+  // ── Stories ──────────────────────────────────────────
+  async function showStories(season) {
+    const res = await fetch(`/browse/seasons/${encodeURIComponent(season)}`);
+    const stories = await res.json();
+    setBreadcrumb(season);
+    const grid = document.createElement('div');
+    grid.className = 'grid-stories';
+    stories.forEach(s => {
+      const card = document.createElement('div');
+      card.className = 'card story-card';
+      card.innerHTML = `<div class="story-title">${s.name}</div>
+        <div class="story-meta">${s.episode_count} episode${s.episode_count !== 1 ? 's' : ''}</div>`;
+      card.addEventListener('click', () => nav({ view: 'episodes', season, story: s.name }));
+      grid.appendChild(card);
+    });
+    setContent(grid);
+  }
+
+  // ── Episodes ─────────────────────────────────────────
+  async function showEpisodes(season, story) {
+    const res = await fetch(`/browse/seasons/${encodeURIComponent(season)}/stories/${encodeURIComponent(story)}`);
+    const episodes = await res.json();
+    setBreadcrumb(season, story);
+    const grid = document.createElement('div');
+    grid.className = 'grid-episodes';
+    episodes.forEach(ep => {
+      const card = document.createElement('div');
+      card.className = 'card' + (selectedId === ep.id ? ' playing' : '');
+      card.id = 'card-' + ep.id;
+      card.innerHTML = `
+        <img class="ep-thumb" src="${ep.thumb_url}" loading="lazy" onerror="this.style.display='none'" />
+        <div class="ep-body">
+          <div class="ep-title" title="${ep.title}">${ep.title}</div>
+          <div class="ep-meta">${ep.video_codec || '?'} · ${Math.round(ep.duration_seconds / 60)}m</div>
+        </div>`;
+      card.addEventListener('click', () => playEpisode(ep.id, ep.stream_url, ep.title));
+      grid.appendChild(card);
+    });
+    setContent(grid);
+  }
+
+  // ── Search ────────────────────────────────────────────
+  async function doSearch(q, push = true) {
+    if (!q) { nav({ view: 'seasons' }); return; }
+    if (push) history.pushState({ view: 'search', q }, '');
+    const res = await fetch(`/library?q=${encodeURIComponent(q)}&page_size=200`);
+    const data = await res.json();
+    setBreadcrumb(null, null, `"${q}"`);
+    const grid = document.createElement('div');
+    grid.className = 'grid-search';
+    data.items.forEach(item => {
+      const card = document.createElement('div');
+      card.className = 'card' + (selectedId === item.id ? ' playing' : '');
+      card.id = 'card-' + item.id;
+      card.innerHTML = `
+        <img class="ep-thumb" src="/thumb/${item.id}" loading="lazy" onerror="this.style.display='none'" />
+        <div class="ep-body">
+          <div class="ep-title" title="${item.title}">${item.title}</div>
+          <div class="ep-meta">${item.video_codec || '?'} · ${Math.round(item.duration_seconds / 60)}m</div>
+        </div>`;
+      card.addEventListener('click', () => playEpisode(item.id, `/stream/${item.id}`, item.title));
+      grid.appendChild(card);
+    });
+    setContent(grid);
+  }
+
+  let searchTimer;
+  document.getElementById('search').addEventListener('input', e => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => doSearch(e.target.value.trim()), 300);
+  });
+
+  // ── HLS helpers ───────────────────────────────────────
+  function attachHls(url, startTime = 0) {
+    const player = document.getElementById('player');
+    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+    if (Hls.isSupported()) {
+      hlsInstance = new Hls({ startPosition: startTime });
+      hlsInstance.loadSource(url);
+      hlsInstance.attachMedia(player);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => player.play().catch(() => {}));
+    } else {
+      // Safari native HLS
+      player.src = url + (startTime ? `#t=${startTime}` : '');
+      player.play().catch(() => {});
+    }
+  }
+
+  function attachHlsMaster(url, startTime = 0, afterParsed = null) {
+    const player = document.getElementById('player');
+    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+    hlsMode = 'master';
+    if (Hls.isSupported()) {
+      hlsInstance = new Hls({ startPosition: startTime });
+      hlsInstance.loadSource(url);
+      hlsInstance.attachMedia(player);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+        player.play().catch(() => {});
+        if (afterParsed) afterParsed(hlsInstance);
+      });
+    } else {
+      // Safari: native HLS handles master playlists
+      player.src = url + (startTime ? `#t=${startTime}` : '');
+      player.play().catch(() => {});
+    }
+  }
+
+  async function pollHlsReady(mediaId, track, onProgress) {
+    while (true) {
+      const { status } = await (await fetch(`/hls/${mediaId}/${track}/status`)).json();
+      if (status === 'ready') return true;
+      onProgress(status);
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+
+  function startHlsReadinessPolling(mediaId, statusUrl, onUpdate) {
+    if (hlsPollTimer) clearInterval(hlsPollTimer);
+    hlsPollTimer = setInterval(async () => {
+      try {
+        const data = await (await fetch(statusUrl)).json();
+        onUpdate(data);
+        if (data.master_ready) {
+          clearInterval(hlsPollTimer);
+          hlsPollTimer = null;
+        }
+      } catch {}
+    }, 4000);
+  }
+
+  // ── Playback ──────────────────────────────────────────
+  async function playEpisode(id, streamUrl, title) {
+    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+    if (hlsPollTimer) { clearInterval(hlsPollTimer); hlsPollTimer = null; }
+    hlsMode = 'direct';
+    selectedId = id;
+    document.querySelectorAll('.card').forEach(c => c.classList.remove('playing'));
+    document.getElementById('card-' + id)?.classList.add('playing');
+
+    const wrap = document.getElementById('player-wrap');
+    const player = document.getElementById('player');
+
+    // Clear subtitle state for new episode
+    activeSub = { mode: 'off', cues: [], images: {}, base: '' };
+    subText.style.display = 'none';
+    subImg.style.display  = 'none';
+    document.getElementById('track-panel').className = '';
+    document.getElementById('track-panel').innerHTML = '';
+
+    wrap.classList.remove('hidden');
+    player.src = streamUrl;
+    player.play().catch(() => {});
+    document.getElementById('now-playing').textContent = title;
+    wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // Fetch track info async — doesn't block playback starting
+    try {
+      const trackData = await (await fetch(`/tracks/${id}`)).json();
+      buildTrackPanel(id, player, trackData);
+    } catch {}
+  }
+
+  // ── Track panel ───────────────────────────────────────
+  function buildTrackPanel(mediaId, player, data) {
+    console.log('[tracks]', JSON.stringify(data, null, 2));
+    const panel = document.getElementById('track-panel');
+    const { audio, subtitles, hls_status_url } = data;
+    if (!audio.length && !subtitles.length) return;
+
+    // Audio tracks — MSE rendition switching via HLS master playlist
+    if (audio.length > 1) {
+      const grp = document.createElement('div');
+      grp.className = 'track-group';
+      grp.innerHTML = '<span class="track-label">Audio:</span>';
+
+      let masterReady = false;
+      const trackIndices = audio.map(a => a.index).join(',');
+      const masterUrl = `/hls/${mediaId}/master.m3u8?tracks=${trackIndices}`;
+
+      // Build buttons — start disabled while HLS generates
+      const btns = audio.map((t, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'track-btn' + (i === 0 ? ' active' : '');
+        btn.textContent = t.label + ' (preparing…)';
+        btn.title = `${t.codec} · ${t.channels}ch`;
+        btn.disabled = true;
+
+        btn.addEventListener('click', () => {
+          if (btn.disabled) return;
+          const pos = player.currentTime;
+
+          // audioPos: position of this track in the audio array (= HLS audioTracks order)
+          const audioPos = i;
+
+          if (hlsMode === 'master' && hlsInstance) {
+            // Instant — swap only the audio SourceBuffer
+            hlsInstance.audioTrack = audioPos;
+          } else {
+            // First audio click — lazy one-time upgrade to HLS master
+            if (!masterReady) return;
+            attachHlsMaster(masterUrl, pos, (hls) => {
+              hls.audioTrack = audioPos;
+            });
+          }
+
+          grp.querySelectorAll('.track-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+
+        grp.appendChild(btn);
+        return btn;
+      });
+
+      panel.appendChild(grp);
+
+      // Poll until master is ready, then enable buttons
+      if (hls_status_url) {
+        function updateAudioButtonStates(statusData) {
+          const audioSt = statusData.audio || {};
+          btns.forEach((btn, i) => {
+            const t = audio[i];
+            const st = audioSt[t.index] || 'not_started';
+            if (st === 'ready') {
+              btn.textContent = t.label;
+            } else {
+              btn.textContent = t.label + ' (preparing…)';
+            }
+          });
+          if (statusData.master_ready) {
+            masterReady = true;
+            btns.forEach(btn => {
+              btn.disabled = false;
+              // Strip any remaining "(preparing…)" suffix
+              btn.textContent = btn.textContent.replace(' (preparing…)', '');
+            });
+          }
+        }
+
+        startHlsReadinessPolling(mediaId, hls_status_url, updateAudioButtonStates);
+      }
+    }
+
+    // Subtitle tracks
+    if (subtitles.length) {
+      const grp = document.createElement('div');
+      grp.className = 'track-group';
+      grp.innerHTML = '<span class="track-label">Subtitles:</span>';
+      const statusEl = document.createElement('span');
+      statusEl.className = 'track-label';
+
+      const setActiveSubBtn = btn => {
+        grp.querySelectorAll('.track-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      };
+
+      const offBtn = document.createElement('button');
+      offBtn.className = 'track-btn off active';
+      offBtn.textContent = 'Off';
+      offBtn.addEventListener('click', () => {
+        activeSub = { mode: 'off', cues: [], images: {}, base: '' };
+        subText.style.display = 'none';
+        subImg.style.display  = 'none';
+        setActiveSubBtn(offBtn);
+      });
+      grp.appendChild(offBtn);
+
+      subtitles.forEach(t => {
+        const btn = document.createElement('button');
+        btn.className = 'track-btn';
+        btn.textContent = t.label;
+        btn.title = t.codec;
+
+        if (t.type === 'text') {
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            const orig = btn.textContent;
+            btn.textContent = `${orig} …`;
+            activeSub = { mode: 'off', cues: [], images: {}, base: '' };
+            subText.style.display = 'none';
+            subImg.style.display  = 'none';
+            try {
+              const res = await fetch(`/subtitles/${mediaId}/${t.index}`);
+              if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
+              const vttText = await res.text();
+              const cues = parseVTT(vttText);
+              activeSub = { mode: 'text', cues, images: {}, base: '' };
+              btn.textContent = orig;
+              if (!cues.length) {
+                subText.textContent = 'No subtitle cues found';
+                subText.style.cssText = 'display:inline;color:#f90';
+                setTimeout(() => { subText.style.display = 'none'; subText.style.color = ''; }, 3000);
+              }
+            } catch (e) {
+              console.error('Subtitle load failed:', e);
+              btn.textContent = orig + ' ✗';
+              subText.textContent = e.message;
+              subText.style.cssText = 'display:inline;color:#f55';
+              setTimeout(() => { subText.style.display = 'none'; subText.style.color = ''; }, 5000);
+            }
+            btn.disabled = false;
+            setActiveSubBtn(btn);
+          });
+
+        } else {
+          // bitmap subtitle
+          btn.addEventListener('click', async () => {
+            if (btn.disabled) return;
+            const orig = btn.textContent;
+            activeSub = { mode: 'off', cues: [], images: {}, base: '' };
+            subText.style.display = 'none';
+            subImg.style.display  = 'none';
+
+            // Poll until extraction (auto-started by server) is ready
+            let { status } = await (await fetch(`/bsubs/${mediaId}/${t.index}/status`)).json();
+
+            if (status !== 'ready') {
+              grp.querySelectorAll('.track-btn').forEach(b => b.disabled = true);
+              statusEl.textContent = ' Preparing…';
+              grp.appendChild(statusEl);
+
+              while (status !== 'ready') {
+                await new Promise(r => setTimeout(r, 2000));
+                ({ status } = await (await fetch(`/bsubs/${mediaId}/${t.index}/status`)).json());
+                statusEl.textContent = ` ${status}…`;
+              }
+
+              grp.querySelectorAll('.track-btn').forEach(b => b.disabled = false);
+              statusEl.textContent = '';
+            }
+
+            try {
+              const cues = await (await fetch(`/bsubs/${mediaId}/${t.index}/cues.json`)).json();
+              // Preload all frames in parallel — one burst, then fully cached
+              const images = {};
+              await Promise.all(cues.map(c => new Promise(resolve => {
+                const img = new Image();
+                img.onload = img.onerror = resolve;
+                img.src = `/bsubs/${mediaId}/${t.index}/${c.frame}`;
+                images[c.frame] = img;
+              })));
+              activeSub = { mode: 'bitmap', cues, images, base: `/bsubs/${mediaId}/${t.index}/` };
+              btn.textContent = orig;
+            } catch (e) {
+              console.error('Bitmap sub load failed:', e);
+              btn.textContent = orig + ' ✗';
+            }
+            setActiveSubBtn(btn);
+          });
+        }
+
+        grp.appendChild(btn);
+      });
+      panel.appendChild(grp);
+    }
+
+    panel.className = 'visible';
+  }
+
+  // ── Helpers ───────────────────────────────────────────
+  function setContent(el) {
+    const content = document.getElementById('content');
+    content.innerHTML = '';
+    content.appendChild(el);
+  }
+
+  function setBreadcrumb(season, story, label) {
+    const el = document.getElementById('breadcrumb');
+    el.innerHTML = '';
+    if (label) { el.textContent = label; return; }
+    if (season) {
+      const a = document.createElement('span');
+      a.className = 'crumb-link';
+      a.textContent = season;
+      a.addEventListener('click', () => nav({ view: 'stories', season }));
+      el.appendChild(a);
+    }
+    if (story) {
+      const sep = document.createElement('span');
+      sep.className = 'sep';
+      sep.textContent = '›';
+      const b = document.createElement('span');
+      b.textContent = story;
+      el.appendChild(sep);
+      el.appendChild(b);
+    }
+  }
+
+  // ── Cast ──────────────────────────────────────────────
+  function toggleCast() {
+    const body = document.getElementById('cast-body');
+    body.classList.toggle('open');
+    if (body.classList.contains('open')) loadDevices();
+  }
+
+  async function loadDevices() {
+    const list = document.getElementById('device-list');
+    list.innerHTML = '<em>Scanning…</em>';
+    try {
+      const devices = await (await fetch('/cast/devices')).json();
+      list.innerHTML = '';
+      if (!devices.length) { list.innerHTML = '<em>No Chromecasts found</em>'; return; }
+      devices.forEach(d => {
+        const btn = document.createElement('button');
+        btn.className = 'device-btn';
+        btn.textContent = d.name;
+        btn.addEventListener('click', () => castTo(d.uuid));
+        list.appendChild(btn);
+      });
+    } catch { list.innerHTML = '<em>Discovery failed</em>'; }
+  }
+
+  async function castTo(uuid) {
+    if (!selectedId) { alert('Play something first.'); return; }
+    const res = await fetch('/cast/play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_uuid: uuid, media_id: selectedId }),
+    });
+    const d = await res.json();
+    document.getElementById('now-playing').textContent =
+      res.ok ? `Casting: ${d.message}` : `Error: ${d.detail}`;
+  }
+
+  // ── Boot ──────────────────────────────────────────────
+  history.replaceState({ view: 'seasons' }, '');
+  showSeasons();
+</script>
+</body>
+</html>
