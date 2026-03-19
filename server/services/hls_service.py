@@ -294,7 +294,7 @@ def build_master_playlist(base: Path, media_id: int, audio_tracks: list, bit_rat
         lang = t.get("language") or "und"
         name = t.get("label") or f"Track {i + 1}"
         default = "YES" if i == 0 else "NO"
-        uri = f"../{media_id}_a{t['index']}/playlist.m3u8"
+        uri = f"/hls/{media_id}/audio/{t['index']}/playlist.m3u8"
         lines.append(
             f'#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",'
             f'NAME="{name}",LANGUAGE="{lang}",DEFAULT={default},'
@@ -305,7 +305,7 @@ def build_master_playlist(base: Path, media_id: int, audio_tracks: list, bit_rat
         f'#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},'
         f'CODECS="avc1.640028,mp4a.40.2",AUDIO="audio"'
     )
-    lines.append(f"../{media_id}_v/playlist.m3u8")
+    lines.append(f"/hls/{media_id}/video/playlist.m3u8")
     return "\n".join(lines) + "\n"
 
 
