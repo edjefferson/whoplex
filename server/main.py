@@ -19,6 +19,7 @@ async def _scan_background():
         print(f"[startup scan] {result}")
 
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db(settings.db_path)

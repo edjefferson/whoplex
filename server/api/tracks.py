@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 
 from server.config import settings
 from server.database import get_db, get_media_by_id
-from server.services import bitmap_sub_service, ffmpeg_service, hls_service
+from server.services import bitmap_sub_service, cleanup_service, ffmpeg_service, hls_service
 
 router = APIRouter(tags=["tracks"])
 
@@ -59,6 +59,8 @@ async def get_tracks(media_id: int, conn: aiosqlite.Connection = Depends(get_db)
             sub_idx += 1
 
     base = settings.db_path.parent
+    asyncio.create_task(asyncio.to_thread(cleanup_service.cleanup_except, base, media_id))
+
     for sub in subtitles:
         if sub["type"] == "bitmap":
             asyncio.create_task(
