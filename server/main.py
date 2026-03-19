@@ -30,6 +30,10 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    from server.services import proc_registry
+    proc_registry.kill_all()
+    print("[shutdown] background ffmpeg processes terminated")
+
 
 app = FastAPI(title="Whoplex Media Server", lifespan=lifespan)
 

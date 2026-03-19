@@ -2,7 +2,7 @@ import asyncio
 import shutil
 from pathlib import Path
 
-from server.services import ffmpeg_service
+from server.services import ffmpeg_service, proc_registry
 
 # (media_id, track) pairs currently being generated
 _generating: set[tuple[int, int]] = set()
@@ -79,6 +79,7 @@ async def _generate(media_id: int, file_path: str, track: int, base: Path) -> No
         proc = await asyncio.create_subprocess_exec(
             *cmd, stderr=asyncio.subprocess.DEVNULL
         )
+        proc_registry.register(proc)
         returncode = await proc.wait()
         if returncode == 0:
             (out_dir / ".done").touch()
@@ -87,6 +88,7 @@ async def _generate(media_id: int, file_path: str, track: int, base: Path) -> No
     except Exception:
         shutil.rmtree(out_dir, ignore_errors=True)
     finally:
+        proc_registry.unregister(proc)
         _generating.discard((media_id, track))
 
 
@@ -122,6 +124,7 @@ async def _generate_video(media_id: int, file_path: str, base: Path) -> None:
     ]
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stderr=asyncio.subprocess.DEVNULL)
+        proc_registry.register(proc)
         returncode = await proc.wait()
         if returncode == 0:
             (out_dir / ".done").touch()
@@ -131,6 +134,7 @@ async def _generate_video(media_id: int, file_path: str, base: Path) -> None:
     except Exception:
         shutil.rmtree(out_dir, ignore_errors=True)
     finally:
+        proc_registry.unregister(proc)
         _gen_video.discard(media_id)
 
 
@@ -172,6 +176,7 @@ async def _generate_audio(media_id: int, file_path: str, track: int, base: Path)
     ]
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stderr=asyncio.subprocess.DEVNULL)
+        proc_registry.register(proc)
         returncode = await proc.wait()
         if returncode == 0:
             (out_dir / ".done").touch()
@@ -181,6 +186,7 @@ async def _generate_audio(media_id: int, file_path: str, track: int, base: Path)
     except Exception:
         shutil.rmtree(out_dir, ignore_errors=True)
     finally:
+        proc_registry.unregister(proc)
         _gen_audio.discard((media_id, track))
 
 
@@ -261,6 +267,7 @@ async def _generate_all(
 
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stderr=asyncio.subprocess.DEVNULL)
+        proc_registry.register(proc)
         returncode = await proc.wait()
         if returncode == 0:
             if do_video:
@@ -280,6 +287,7 @@ async def _generate_all(
         for _, adir in adirs:
             shutil.rmtree(adir, ignore_errors=True)
     finally:
+        proc_registry.unregister(proc)
         if do_video:
             _gen_video.discard(media_id)
         for idx, _ in adirs:

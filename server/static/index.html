@@ -103,10 +103,10 @@
 
 <script>
   // ── State ────────────────────────────────────────────
-  let selectedId   = null;
-  let hlsInstance  = null;
-  let hlsMode      = 'direct'; // 'direct' | 'master'
-  let hlsPollTimer = null;
+  let selectedId        = null;
+  let hlsInstance       = null;
+  let currentAudioTrack = 0;   // active remux track index
+  let seekRestarting    = false;
   // activeSub: { mode: 'off'|'text'|'bitmap', cues: [], images: {}, base: '' }
   let activeSub    = { mode: 'off', cues: [], images: {}, base: '' };
 
@@ -175,6 +175,17 @@
       if (cue) { subImg.src = activeSub.images[cue.frame].src; subImg.style.display = 'inline-block'; }
       else      { subImg.style.display = 'none'; }
     }
+  });
+
+  // Restart pipe at new position when user seeks on a non-default audio track
+  document.getElementById('player').addEventListener('seeking', () => {
+    if (currentAudioTrack === 0 || seekRestarting || !selectedId) return;
+    seekRestarting = true;
+    const pos = Math.floor(document.getElementById('player').currentTime);
+    document.getElementById('player').src =
+      `/stream/${selectedId}?audio=${currentAudioTrack}&start=${pos}`;
+    document.getElementById('player').play().catch(() => {});
+    setTimeout(() => { seekRestarting = false; }, 1500);
   });
 
   // ── History / routing ────────────────────────────────
@@ -364,8 +375,7 @@
   // ── Playback ──────────────────────────────────────────
   async function playEpisode(id, streamUrl, title) {
     if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-    if (hlsPollTimer) { clearInterval(hlsPollTimer); hlsPollTimer = null; }
-    hlsMode = 'direct';
+    currentAudioTrack = 0;
     selectedId = id;
     document.querySelectorAll('.card').forEach(c => c.classList.remove('playing'));
     document.getElementById('card-' + id)?.classList.add('playing');
@@ -400,77 +410,41 @@
     const { audio, subtitles, hls_status_url } = data;
     if (!audio.length && !subtitles.length) return;
 
-    // Audio tracks — MSE rendition switching via HLS master playlist
+    // Audio tracks — ffmpeg pipe stream per track, seeking restarts pipe
     if (audio.length > 1) {
       const grp = document.createElement('div');
       grp.className = 'track-group';
       grp.innerHTML = '<span class="track-label">Audio:</span>';
 
-      let masterReady = false;
-      const trackIndices = audio.map(a => a.index).join(',');
-      const masterUrl = `/hls/${mediaId}/master.m3u8?tracks=${trackIndices}`;
-
-      // Build buttons — start disabled while HLS generates
-      const btns = audio.map((t, i) => {
+      audio.forEach((t, i) => {
         const btn = document.createElement('button');
         btn.className = 'track-btn' + (i === 0 ? ' active' : '');
-        btn.textContent = t.label + ' (preparing…)';
+        btn.textContent = t.label;
         btn.title = `${t.codec} · ${t.channels}ch`;
-        btn.disabled = true;
 
         btn.addEventListener('click', () => {
-          if (btn.disabled) return;
-          const pos = player.currentTime;
+          const pos = Math.floor(player.currentTime);
+          currentAudioTrack = t.index;
 
-          // audioPos: position of this track in the audio array (= HLS audioTracks order)
-          const audioPos = i;
+          if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
 
-          if (hlsMode === 'master' && hlsInstance) {
-            // Instant — swap only the audio SourceBuffer
-            hlsInstance.audioTrack = audioPos;
+          if (t.index === 0) {
+            // Track 0: restore direct file stream with range support
+            player.src = `/stream/${mediaId}`;
+            player.currentTime = pos;
           } else {
-            // First audio click — lazy one-time upgrade to HLS master
-            if (!masterReady) return;
-            attachHlsMaster(masterUrl, pos, (hls) => {
-              hls.audioTrack = audioPos;
-            });
+            player.src = `/stream/${mediaId}?audio=${t.index}&start=${pos}`;
           }
+          player.play().catch(() => {});
 
           grp.querySelectorAll('.track-btn').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
         });
 
         grp.appendChild(btn);
-        return btn;
       });
 
       panel.appendChild(grp);
-
-      // Poll until master is ready, then enable buttons
-      if (hls_status_url) {
-        function updateAudioButtonStates(statusData) {
-          const audioSt = statusData.audio || {};
-          btns.forEach((btn, i) => {
-            const t = audio[i];
-            const st = audioSt[t.index] || 'not_started';
-            if (st === 'ready') {
-              btn.textContent = t.label;
-            } else {
-              btn.textContent = t.label + ' (preparing…)';
-            }
-          });
-          if (statusData.master_ready) {
-            masterReady = true;
-            btns.forEach(btn => {
-              btn.disabled = false;
-              // Strip any remaining "(preparing…)" suffix
-              btn.textContent = btn.textContent.replace(' (preparing…)', '');
-            });
-          }
-        }
-
-        startHlsReadinessPolling(mediaId, hls_status_url, updateAudioButtonStates);
-      }
     }
 
     // Subtitle tracks
